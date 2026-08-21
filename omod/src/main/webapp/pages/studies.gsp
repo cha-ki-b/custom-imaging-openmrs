@@ -108,6 +108,30 @@ ${param["message"]?.getAt(0) ?: ""}
         </tbody>
     </table>
 </div>
+
+<%
+    // ---------------------------------------------------------------------------------
+    // medreport integration - the whole of it on this page.
+    //
+    // The imaging module owns images, not reports. It hands medreport the list of studies
+    // it has just rendered; medreport's fragment then provides writing a report over one or
+    // several of them, reading every report about a chosen image, and managing one's own -
+    // together with all the privilege, versioning and audit rules. No report logic lives
+    // here, and the guard means this page is unchanged when medreport is not installed.
+    // ---------------------------------------------------------------------------------
+    if (medreportAvailable) {
+        def medreportImages = studies.collect { study ->
+            [ studyUid         : study.orthancStudyUID,
+              studyInstanceUid : study.studyInstanceUID,
+              studyDate        : study.studyDate,
+              studyDescription : study.studyDescription ]
+        }
+%>
+    ${ ui.includeFragment("medreport", "imageReports", [
+            patientId       : patient.id,
+            availableImages : medreportImages ]) }
+<% } %>
+
 <div id="popupOverlayUpload" class="overlay-container">
     <div class="popup-box">
         <h2 style="color: #009384;">Upload study</h2>

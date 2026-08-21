@@ -17,6 +17,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.commons.logging.Log;
 import org.openmrs.Patient;
 import org.openmrs.api.context.Context;
+import org.openmrs.module.ModuleFactory;
 import org.openmrs.module.imaging.ImagingConstants;
 import org.openmrs.module.imaging.api.DicomStudyService;
 import org.openmrs.module.imaging.api.study.DicomSeries;
@@ -50,6 +51,18 @@ public class SeriesPageController {
 			model.addAttribute("studyInstanceUID", dicomStudy.getStudyInstanceUID());
 			model.addAttribute("privilegeModifyImageData",
 			    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
+			
+			// --- medreport integration hook -------------------------------------------
+			// This module owns images, not reports. All it does here is publish the study
+			// identifiers it already holds, and record whether the medreport module is
+			// running; series.gsp then includes medreport's fragment, which contains every
+			// bit of report logic, markup and privilege handling. Nothing about reports is
+			// implemented here, and imaging keeps no dependency on medreport - if that
+			// module is absent, the flag is false and this page renders exactly as before.
+			model.addAttribute("orthancStudyUID", dicomStudy.getOrthancStudyUID());
+			model.addAttribute("studyDate", dicomStudy.getStudyDate());
+			model.addAttribute("studyDescription", dicomStudy.getStudyDescription());
+			model.addAttribute("medreportAvailable", ModuleFactory.isModuleStarted("medreport"));
 		}
 		catch (IOException e) {
 			throw new RuntimeException(e);

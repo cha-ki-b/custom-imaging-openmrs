@@ -17,6 +17,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.openmrs.Patient;
 import org.openmrs.api.context.Context;
+import org.openmrs.module.ModuleFactory;
 import org.openmrs.module.imaging.ImagingConstants;
 import org.openmrs.module.imaging.ImagingProperties;
 import org.openmrs.module.imaging.OrthancConfiguration;
@@ -52,6 +53,11 @@ public class StudiesPageController {
 		model.addAttribute("privilegeModifyImageData",
 		    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 		model.addAttribute("maxUploadImageDataSize", maxUploadImageDataSize);
+
+		// medreport integration hook: studies.gsp passes the study list to medreport's
+		// report fragment when that module is running. Nothing about reports is implemented
+		// here, and imaging keeps no dependency on medreport.
+		model.addAttribute("medreportAvailable", ModuleFactory.isModuleStarted("medreport"));
 	}
 	
 	@ExceptionHandler(MaxUploadSizeExceededException.class)
