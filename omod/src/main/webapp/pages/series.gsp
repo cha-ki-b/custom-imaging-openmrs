@@ -84,6 +84,22 @@ ${param["message"]?.getAt(0) ?: ""}
                         <% } %>
                         <a href="${normalizedBaseUrl}/ui/app/#/filtered-studies?StudyInstanceUID=${studyInstanceUID}&expand=series" title="${ ui.message("imaging.app.orthancExplorer.label") }">
                             <img class="orthanc-img" alt="Show image data in Orthanc explorer" src="${ ui.resourceLink("imaging", "images/orthanc.png")}"/></a>
+                        <%
+                            // medreport hook: hands this row's DICOM metadata to medreport's
+                            // editor. The button only appears when medreport is running, and
+                            // medreport itself decides (server-side) whether this user may
+                            // actually write a report - this page makes no such judgement.
+                            if (medreportAvailable) {
+                        %>
+                            <a href="javascript:void(0)" title="${ ui.message("imaging.app.writeReport.label") }"
+                               onclick="medreportImaging.openForSeries({
+                                   seriesUid: '${ ui.escapeJs(series.orthancSeriesUID) }',
+                                   studyInstanceUid: '${ ui.escapeJs(studyInstanceUID) }',
+                                   modality: '${ ui.escapeJs(ui.format(series.modality)) }',
+                                   studyDate: '${ ui.escapeJs(ui.format(series.seriesDate)) }',
+                                   studyDescription: '${ ui.escapeJs(ui.format(series.seriesDescription)) }' })">
+                                <i class="icon-file-alt"></i></a>
+                        <% } %>
                      </td>
                 </tr>
             <% } %>
@@ -91,6 +107,39 @@ ${param["message"]?.getAt(0) ?: ""}
     </table>
 </div>
 <br/>
+
+<%
+    // ---------------------------------------------------------------------------------
+    // medreport integration - the whole of it.
+    //
+    // This page passes the study identifiers it already displays; medreport's fragment
+    // renders the report list, the editor, the permission-driven actions and the version
+    // history, and talks to medreport's own REST resources. No report logic lives in the
+    // imaging module, and the guard means this page is unchanged when medreport is absent.
+    // ---------------------------------------------------------------------------------
+    if (medreportAvailable) {
+        // Offer the whole study plus each of its series, so a report can cover the study as
+        // a whole or just the sequences the clinician actually read.
+        def medreportImages = [[
+                studyUid         : orthancStudyUID,
+                studyInstanceUid : studyInstanceUID,
+                studyDate        : studyDate,
+                studyDescription : studyDescription ]]
+        serieses.each { series ->
+            medreportImages << [
+                studyUid         : orthancStudyUID,
+                seriesUid        : series.orthancSeriesUID,
+                studyInstanceUid : studyInstanceUID,
+                modality         : series.modality,
+                studyDate        : series.seriesDate,
+                studyDescription : series.seriesDescription ]
+        }
+%>
+    ${ ui.includeFragment("medreport", "imageReports", [
+            patientId       : patient.id,
+            studyUid        : orthancStudyUID,
+            availableImages : medreportImages ]) }
+<% } %>
 
 <div id="popupOverlayDeleteSeries" class="overlay-container">
     <div class="popup-box" style="width: 65%;">
