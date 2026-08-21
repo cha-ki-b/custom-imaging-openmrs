@@ -52,16 +52,10 @@ public class SeriesPageController {
 			model.addAttribute("privilegeModifyImageData",
 			    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 			
-			// --- medreport integration hook -------------------------------------------
-			// This module owns images, not reports. All it does here is publish the study
-			// identifiers it already holds, and record whether the medreport module is
-			// running; series.gsp then includes medreport's fragment, which contains every
-			// bit of report logic, markup and privilege handling. Nothing about reports is
-			// implemented here, and imaging keeps no dependency on medreport - if that
-			// module is absent, the flag is false and this page renders exactly as before.
+			// medreport integration hook. Publishes the Orthanc study id this page already
+			// holds, plus whether medreport is running; series.gsp then renders a link to
+			// medreport's reports page and a per-series "write a report" action.
 			model.addAttribute("orthancStudyUID", dicomStudy.getOrthancStudyUID());
-			model.addAttribute("studyDate", dicomStudy.getStudyDate());
-			model.addAttribute("studyDescription", dicomStudy.getStudyDescription());
 			model.addAttribute("medreportAvailable", ModuleFactory.isModuleStarted("medreport"));
 		}
 		catch (IOException e) {

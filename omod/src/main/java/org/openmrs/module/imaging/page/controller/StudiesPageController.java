@@ -53,11 +53,10 @@ public class StudiesPageController {
 		model.addAttribute("privilegeModifyImageData",
 		    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 		model.addAttribute("maxUploadImageDataSize", maxUploadImageDataSize);
-
-		// medreport integration hook: studies.gsp passes the study list to medreport's
-		// report fragment when that module is running. Nothing about reports is implemented
-		// here, and imaging keeps no dependency on medreport.
-		model.addAttribute("medreportAvailable", ModuleFactory.isModuleStarted("medreport"));
+			// medreport integration hook: the GSP renders a link to medreport's own reports
+			// page when that module is running. Nothing about reports is implemented here,
+			// and this module keeps no dependency on medreport.
+			model.addAttribute("medreportAvailable", ModuleFactory.isModuleStarted("medreport"));
 	}
 	
 	@ExceptionHandler(MaxUploadSizeExceededException.class)
