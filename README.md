@@ -124,3 +124,40 @@ If you want to generate a `.wl` file, uncomment the following lines from the pyt
   # with open("/tmp/worklist_test.wl", 'wb') as f:
   # f.write(responseDicom)`
 ```
+
+---
+
+# medreport integration (1.1.2-SNAPSHOT)
+
+This module owns **images**, not reports. Report writing, reading, versioning, permissions and
+auditing all live in the separate `medreport` module. What this module contributes is two
+entry points and one boolean.
+
+### The whole change
+
+| File | Change |
+| --- | --- |
+| `StudiesPageController` | adds `medreportAvailable = ModuleFactory.isModuleStarted("medreport")` |
+| `SeriesPageController` | the same, plus publishes `orthancStudyUID` |
+| `studies.gsp` | a banner **above** the studies table linking to `medreport/imagingReports.page` |
+| `series.gsp` | the same banner (scoped to the study), plus a per-row document icon that opens medreport's editor on that series |
+| `messages*.properties` | one key, `imaging.app.writeReport.label` |
+
+No report logic, no `medreport` dependency in any `pom.xml`, and every addition is wrapped in
+`<% if (medreportAvailable) { %>`. **With `medreport` absent, these pages render exactly as
+they did before.**
+
+### Why a link and not an embedded panel
+
+An earlier revision embedded medreport's reports panel at the *bottom* of `studies.gsp`. That
+failed in two concrete ways: clinicians never scrolled past the studies table to find it, and
+it vanished entirely on the "Get studies" navigation. A banner at the top pointing at
+medreport's own page fixes both, and the per-series action has a stable target.
+
+### If you edit these GSPs
+
+Groovy's `SimpleTemplateEngine` has **no JSP comment syntax** — `<%-- … --%>` is a parse error
+that surfaces as a full-page *UI Framework Error* to the clinician, and a `.gsp` is only
+compiled when someone opens the page, so the build will not catch it. Use `<% /* … */ %>`.
+`medreport`'s `GspTemplateParseTest` compiles every template in *that* module at build time;
+this module has no equivalent, so review template edits carefully.

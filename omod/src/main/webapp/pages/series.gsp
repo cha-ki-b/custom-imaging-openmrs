@@ -40,6 +40,34 @@ ${param["message"]?.getAt(0) ?: ""}
     }
 </script>
 
+<%
+    // ---------------------------------------------------------------------------------
+    // medreport entry point.
+    //
+    // Placed ABOVE the studies table on purpose. An earlier version embedded the whole
+    // reports panel at the bottom of this page, which failed twice over: clinicians never
+    // scrolled far enough to see it, and it disappeared entirely on the "Get studies"
+    // navigation. A banner at the top linking to medreport's own page fixes both, and gives
+    // the per-row action below somewhere stable to point at.
+    //
+    // The guard keeps this page working unchanged when medreport is not installed. No report
+    // logic lives here; the imaging module still knows nothing about reports.
+    // ---------------------------------------------------------------------------------
+    if (medreportAvailable) {
+%>
+    <% ui.includeCss("medreport", "medreport.css") %>
+    <div class="mr-entry-banner">
+        <div>
+            <strong>${ ui.message("medreport.imaging.openPage") }</strong>
+            <span class="mr-entry-hint">${ ui.message("medreport.imaging.openPageHint") }</span>
+        </div>
+        <a class="mr-btn mr-btn-primary"
+           href="${ ui.pageLink('medreport', 'imagingReports', [patientId: patient.id, studyUid: orthancStudyUID]) }">
+            ${ ui.message("medreport.imaging.openPage") }
+        </a>
+    </div>
+<% } %>
+
 <div id="table-scroll">
     <table id="series" class="table table-sm table-responsive-sm table-responsive-md table-responsive-lg table-responsive-xl" data-sortable>
         <thead class="imaging-table-thead">
@@ -84,20 +112,13 @@ ${param["message"]?.getAt(0) ?: ""}
                         <% } %>
                         <a href="${normalizedBaseUrl}/ui/app/#/filtered-studies?StudyInstanceUID=${studyInstanceUID}&expand=series" title="${ ui.message("imaging.app.orthancExplorer.label") }">
                             <img class="orthanc-img" alt="Show image data in Orthanc explorer" src="${ ui.resourceLink("imaging", "images/orthanc.png")}"/></a>
-                        <%
-                            // medreport hook: hands this row's DICOM metadata to medreport's
-                            // editor. The button only appears when medreport is running, and
-                            // medreport itself decides (server-side) whether this user may
-                            // actually write a report - this page makes no such judgement.
-                            if (medreportAvailable) {
-                        %>
-                            <a href="javascript:void(0)" title="${ ui.message("imaging.app.writeReport.label") }"
-                               onclick="medreportImaging.openForSeries({
-                                   seriesUid: '${ ui.escapeJs(series.orthancSeriesUID) }',
-                                   studyInstanceUid: '${ ui.escapeJs(studyInstanceUID) }',
-                                   modality: '${ ui.escapeJs(ui.format(series.modality)) }',
-                                   studyDate: '${ ui.escapeJs(ui.format(series.seriesDate)) }',
-                                   studyDescription: '${ ui.escapeJs(ui.format(series.seriesDescription)) }' })">
+                        <% if (medreportAvailable) { %>
+                            <a title="${ ui.message("imaging.app.writeReport.label") }"
+                               href="${ ui.pageLink('medreport', 'imagingReports',
+                                       [patientId : patient.id,
+                                        studyUid  : orthancStudyUID,
+                                        seriesUid : series.orthancSeriesUID,
+                                        'new'     : '1']) }">
                                 <i class="icon-file-alt"></i></a>
                         <% } %>
                      </td>
@@ -107,39 +128,6 @@ ${param["message"]?.getAt(0) ?: ""}
     </table>
 </div>
 <br/>
-
-<%
-    // ---------------------------------------------------------------------------------
-    // medreport integration - the whole of it.
-    //
-    // This page passes the study identifiers it already displays; medreport's fragment
-    // renders the report list, the editor, the permission-driven actions and the version
-    // history, and talks to medreport's own REST resources. No report logic lives in the
-    // imaging module, and the guard means this page is unchanged when medreport is absent.
-    // ---------------------------------------------------------------------------------
-    if (medreportAvailable) {
-        // Offer the whole study plus each of its series, so a report can cover the study as
-        // a whole or just the sequences the clinician actually read.
-        def medreportImages = [[
-                studyUid         : orthancStudyUID,
-                studyInstanceUid : studyInstanceUID,
-                studyDate        : studyDate,
-                studyDescription : studyDescription ]]
-        serieses.each { series ->
-            medreportImages << [
-                studyUid         : orthancStudyUID,
-                seriesUid        : series.orthancSeriesUID,
-                studyInstanceUid : studyInstanceUID,
-                modality         : series.modality,
-                studyDate        : series.seriesDate,
-                studyDescription : series.seriesDescription ]
-        }
-%>
-    ${ ui.includeFragment("medreport", "imageReports", [
-            patientId       : patient.id,
-            studyUid        : orthancStudyUID,
-            availableImages : medreportImages ]) }
-<% } %>
 
 <div id="popupOverlayDeleteSeries" class="overlay-container">
     <div class="popup-box" style="width: 65%;">
