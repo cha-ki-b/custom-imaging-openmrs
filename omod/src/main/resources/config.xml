@@ -76,6 +76,17 @@
 		<description>Set maximum size for upload of image study data</description>
 	</globalProperty>
 
+	<globalProperty>
+		<property>imaging.ohifBaseUrl</property>
+		<defaultValue></defaultValue>
+		<description>
+			Base URL of the OHIF viewer deployment (e.g. https://viewer.hospital.lan),
+			with no trailing slash. Used to build the "open in OHIF" links on the
+			studies and series pages - separate from the Orthanc server URLs below
+			since OHIF is deployed as its own service, not a subpath of Orthanc.
+		</description>
+	</globalProperty>
+
 	<!-- AOP
 	<advice>
 		<point>org.openmrs.api.FormService</point>

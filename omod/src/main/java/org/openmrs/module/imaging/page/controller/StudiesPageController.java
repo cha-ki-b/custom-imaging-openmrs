@@ -53,6 +53,7 @@ public class StudiesPageController {
 		model.addAttribute("privilegeModifyImageData",
 		    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 		model.addAttribute("maxUploadImageDataSize", maxUploadImageDataSize);
+		model.addAttribute("ohifBaseUrl", imageProps.getOhifBaseUrl());
 			// medreport integration hook: the GSP renders a link to medreport's own reports
 			// page when that module is running. Nothing about reports is implemented here,
 			// and this module keeps no dependency on medreport.

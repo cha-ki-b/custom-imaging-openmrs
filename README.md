@@ -34,9 +34,24 @@ The following is needed:
 
 ## Deploying the imaging module
 
-Download our imaging backend OMOD module from https://github.com/sadrezhao/openmrs-module-imaging/releases, copy it to the module directory of your OpenMRS backend server,
-and start the server or OpenMRS is up and running, you can upload the new module (imaging-1.0.0-SNAPSHOT.omod) using the 'Add or Upgrade Module' option in Manage Modules.
-Please note that the upload may take some time. If deployed successfully, it should appear in the list of loaded modules on your server:
+**This is a customised fork.** Do not download the upstream release — its artifact does not
+contain the OHIF integration or the deletion-reconciliation fix. Build from this directory:
+
+```bash
+mvn clean package -DskipTests
+```
+
+The artifact is produced at `omod/target/imaging-1.2.0.omod`. With OpenMRS running, upload it
+via **Administration → Manage Modules → 'Add or Upgrade Module'**; OpenMRS detects the
+installed version and offers an upgrade. The upload may take some time. Keep a copy of the
+previously installed `.omod` first — it is the only rollback path, since the artifact is not
+in version control:
+
+```bash
+docker cp openmrs-app:/usr/local/tomcat/.OpenMRS/modules/<current>.omod ~/
+```
+
+If deployed successfully, it should appear in the list of loaded modules on your server:
 
 ![The imaging module](omod/src/main/webapp/resources/images/imagingModule.png)
 
@@ -161,3 +176,118 @@ that surfaces as a full-page *UI Framework Error* to the clinician, and a `.gsp`
 compiled when someone opens the page, so the build will not catch it. Use `<% /* … */ %>`.
 `medreport`'s `GspTemplateParseTest` compiles every template in *that* module at build time;
 this module has no equivalent, so review template edits carefully.
+
+---
+
+# OHIF integration (1.2.0)
+
+This module owns the **link** to OHIF, not OHIF itself. The viewer is a separate
+container fronted by its own reverse-proxy host; see
+`../OHIF-Integration-Architecture.md` for the full transport, TLS and authentication
+design. What this module contributes is one global property and one icon per study.
+
+### The whole change
+
+| File | Change |
+| --- | --- |
+| `ImagingConstants` | `GP_OHIF_BASE_URL = "imaging.ohifBaseUrl"` |
+| `ImagingProperties` | `getOhifBaseUrl()` reads that global property |
+| `config.xml` | declares `imaging.ohifBaseUrl`, default **empty** |
+| `StudiesPageController` | publishes `ohifBaseUrl` to the model |
+| `SeriesPageController` | the same |
+| `SyncStudiesPageController` | the same — **added in 1.2.0** |
+| `studies.gsp`, `series.gsp` | OHIF icon between Stone Viewer and Orthanc Explorer |
+| `syncStudies.gsp` | the same icon — **added in 1.2.0** |
+| `messages.properties`, `messages_pl.properties` | `imaging.app.openOHIFView.label` |
+| `resources/images/ohifViewer.png` | the icon |
+| `DicomStudyServiceImpl` | prunes studies deleted from Orthanc — **added in 1.2.0** |
+
+The link is built as:
+
+```
+<imaging.ohifBaseUrl, trailing slash stripped>/viewer?StudyInstanceUIDs=<studyInstanceUID>
+```
+
+Every OHIF addition is wrapped in `<% if (ohifBaseUrl?.trim()) { %>`. **With the
+property unset, these pages render exactly as they did before** — which is also why
+nothing appears if you deploy the module without configuring it.
+
+## Deployment — one required setting
+
+After installing the `.omod`, set the global property at
+**Administration → Maintenance → Settings → Imaging**:
+
+```
+imaging.ohifBaseUrl = https://viewer.hospital.lan
+```
+
+- No trailing slash (a trailing slash is stripped anyway) and **no leading or trailing
+  whitespace** — the guard is `?.trim()`, so a whitespace-only value renders nothing and
+  looks identical to not having set it.
+- **Set it through the UI, not by SQL.** OpenMRS caches global properties in memory; a
+  direct `UPDATE` on `global_property` leaves the running application serving the old
+  value, so the button will not appear even though the database looks correct.
+- The property is created automatically, empty, when the module starts.
+
+Do **not** confuse this with the **Configuring the Orthanc server** page. That page edits
+the `imaging_OrthancConfiguration` table (`orthancBaseUrl`, `orthancProxyUrl`,
+credentials) and has nothing to do with OHIF. Changing `orthancBaseUrl` there breaks
+uploads and study syncing.
+
+## What 1.2.0 fixes
+
+### 1. Studies deleted from Orthanc kept appearing in "Get studies"
+
+`imaging_DicomStudy` is a **local mirror** of what Orthanc holds, and nothing pruned it:
+
+- `fetchAllStudies(config)` called `createOrUpdateStudy` for every study Orthanc
+  returned — create or update only, **never delete**.
+- `fetchNewChangedStudies(config)` handles only `NewStudy` and `StableStudy` changes.
+
+Handling a `Deleted` change type would **not** have fixed it. Orthanc's `/changes` log
+contains no deletion events at all: change rows are tied to the resource and are removed
+along with it. This was confirmed against a live server whose log held only `NewInstance`,
+`NewSeries`, `NewStudy`, `StableStudy`, `StablePatient` and `UpdatedAttachment` entries
+despite studies having been deleted.
+
+**Reconciliation during a full fetch is therefore the only reliable mechanism.**
+`fetchAllStudies(config)` now collects the `StudyInstanceUID`s Orthanc returned and calls
+`removeStudiesDeletedFromOrthanc(config, uids)`, which removes local rows for that
+configuration whose UID is absent.
+
+> **This deletes patient-assigned records too.** A study removed from the PACS cannot be
+> viewed — every link on it 404s — so keeping the row is misleading. Removals are logged:
+> `log.info` normally, and **`log.warn`** when the row was assigned to a patient, naming
+> the study UID and patient id, so the loss of a clinical association is auditable. If
+> your site needs assigned studies preserved, change `removeStudiesDeletedFromOrthanc`
+> to skip rows where `getMrsPatient() != null`.
+
+Scope: only the configuration being fetched, so a multi-Orthanc setup will not have one
+unreachable server prune another's studies. Nothing in the schema references
+`imaging_DicomStudy`, so removal has no cascade effects.
+
+The incremental poller (`fetchNewChangedStudies`) is unchanged and still cannot see
+deletions — **"Get studies" is what reconciles them.**
+
+### 2. The OHIF icon was missing on the "Get studies" page
+
+Two independent omissions, both required:
+
+- `SyncStudiesPageController.get()` never called
+  `model.addAttribute("ohifBaseUrl", ...)`, unlike the studies and series controllers.
+- `syncStudies.gsp` had no OHIF markup at all.
+
+The icon appeared on a patient's own studies but vanished on studies fetched from the
+PACS. Both are fixed, matching the existing pages exactly.
+
+### If you edit these GSPs
+
+Groovy's `SimpleTemplateEngine` has **no JSP comment syntax** — `<%-- … --%>` is a parse
+error that surfaces as a full-page *UI Framework Error*, and a `.gsp` is compiled only
+when someone opens the page, so the build will not catch it. Use `<% /* … */ %>`.
+
+`syncStudies.gsp` uses **CRLF** line endings while the Java sources use LF. Preserve
+them; a mixed-ending file produces confusing diffs.
+
+The build runs `maven-java-formatter-plugin`, which **rewrites sources in place**. Expect
+your formatting to be normalised, and re-read files after a build before diffing.

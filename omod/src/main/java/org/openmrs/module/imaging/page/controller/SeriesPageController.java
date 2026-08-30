@@ -19,6 +19,7 @@ import org.openmrs.Patient;
 import org.openmrs.api.context.Context;
 import org.openmrs.module.ModuleFactory;
 import org.openmrs.module.imaging.ImagingConstants;
+import org.openmrs.module.imaging.ImagingProperties;
 import org.openmrs.module.imaging.api.DicomStudyService;
 import org.openmrs.module.imaging.api.study.DicomSeries;
 import org.openmrs.module.imaging.api.study.DicomStudy;
@@ -49,6 +50,8 @@ public class SeriesPageController {
 			model.addAttribute("serieses", seriesList);
 			model.addAttribute("studyId", studyId);
 			model.addAttribute("studyInstanceUID", dicomStudy.getStudyInstanceUID());
+			ImagingProperties imageProps = Context.getRegisteredComponent("imagingProperties", ImagingProperties.class);
+			model.addAttribute("ohifBaseUrl", imageProps.getOhifBaseUrl());
 			model.addAttribute("privilegeModifyImageData",
 			    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 			
