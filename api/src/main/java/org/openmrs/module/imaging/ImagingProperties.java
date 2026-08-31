@@ -85,4 +85,12 @@ public class ImagingProperties {
 			        + globalProperty + " is not parsable as a long", e);
 		}
 	}
+	
+	/**
+	 * @return the configured OHIF viewer base URL (e.g. https://viewer.hospital.lan), or null if
+	 *         not yet configured
+	 */
+	public String getOhifBaseUrl() {
+		return administrationService.getGlobalProperty(ImagingConstants.GP_OHIF_BASE_URL);
+	}
 }

@@ -19,6 +19,7 @@ import org.apache.commons.logging.LogFactory;
 import org.openmrs.Patient;
 import org.openmrs.api.context.Context;
 import org.openmrs.module.imaging.ImagingConstants;
+import org.openmrs.module.imaging.ImagingProperties;
 import org.openmrs.module.imaging.api.DicomStudyService;
 import org.openmrs.module.imaging.api.study.DicomStudy;
 import org.openmrs.ui.framework.Model;
@@ -38,6 +39,7 @@ public class SyncStudiesPageController {
 	
 	public void get(Model model, @RequestParam(value = "patientId") Patient patient,
 	        @RequestParam(value = "message") String message) {
+		ImagingProperties imageProps = Context.getRegisteredComponent("imagingProperties", ImagingProperties.class);
 		DicomStudyService dicomStudyService = Context.getService(DicomStudyService.class);
 		List<DicomStudy> allStudies = dicomStudyService.getAllStudies();
 		model.addAttribute("studies", allStudies);
@@ -52,6 +54,7 @@ public class SyncStudiesPageController {
 		model.addAttribute("match", match);
 		model.addAttribute("privilegeModifyImageData",
 		    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
+		model.addAttribute("ohifBaseUrl", imageProps.getOhifBaseUrl());
 	}
 	
 	/**

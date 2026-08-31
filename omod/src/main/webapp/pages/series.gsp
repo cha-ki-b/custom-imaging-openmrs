@@ -110,6 +110,15 @@ ${param["message"]?.getAt(0) ?: ""}
                                 title="${ ui.message("imaging.app.openStoneView.label") }">
                                 <img class="series-stone-img" src="${ ui.resourceLink("imaging", "images/stoneViewer.png") }"/></a>
                         <% } %>
+                        <% if (ohifBaseUrl?.trim()) {
+                            def normalizedOhifBaseUrl = ohifBaseUrl.endsWith("/") ? ohifBaseUrl[0..-2] : ohifBaseUrl
+                        %>
+                            <% /* OHIF's launch URL addresses a whole study, not a single series -
+                                  there's no series-scoped deep link the way Stone Viewer has one,
+                                  so this opens the same study-level viewer as the studies page. */ %>
+                            <a href="${normalizedOhifBaseUrl}/viewer?StudyInstanceUIDs=${studyInstanceUID}" title="${ ui.message("imaging.app.openOHIFView.label") }" target="_blank">
+                                <img class="ohif-img" alt="Show image in OHIF viewer" src="${ ui.resourceLink("imaging", "images/ohifViewer.png")}"/></a>
+                        <% } %>
                         <a href="${normalizedBaseUrl}/ui/app/#/filtered-studies?StudyInstanceUID=${studyInstanceUID}&expand=series" title="${ ui.message("imaging.app.orthancExplorer.label") }">
                             <img class="orthanc-img" alt="Show image data in Orthanc explorer" src="${ ui.resourceLink("imaging", "images/orthanc.png")}"/></a>
                         <% if (medreportAvailable) { %>

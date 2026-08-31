@@ -142,9 +142,12 @@ public class DicomStudyServiceImpl extends BaseOpenmrsService implements DicomSt
 		int status = con.getResponseCode();
 		if (status == HttpURLConnection.HTTP_OK) {
 			JsonNode studiesData = new ObjectMapper().readTree(con.getInputStream());
+			Set<String> remoteStudyInstanceUIDs = new HashSet<String>();
 			for (JsonNode studyData : studiesData) {
 				createOrUpdateStudy(config, studyData);
+				remoteStudyInstanceUIDs.add(studyData.path("MainDicomTags").path("StudyInstanceUID").getTextValue());
 			}
+			removeStudiesDeletedFromOrthanc(config, remoteStudyInstanceUIDs);
 		} else {
 			throwConnectionException(config, con);
 		}
@@ -175,6 +178,31 @@ public class DicomStudyServiceImpl extends BaseOpenmrsService implements DicomSt
 			// DICOM studies are immutable. Only the Orthanc ID can change.
 			existingStudy.setOrthancStudyUID(study.getOrthancStudyUID());
 			dao.save(existingStudy);
+		}
+	}
+	
+	/**
+	 * Removes local study records whose studies no longer exist on the Orthanc server.
+	 * <p>
+	 * Orthanc's /changes log cannot be used to detect deletions: deleting a resource also deletes
+	 * its change entries, so a deletion is never observable there. Reconciling the local mirror
+	 * during a full fetch is therefore the only reliable mechanism.
+	 * 
+	 * @param config the orthanc configuration
+	 * @param remoteStudyInstanceUIDs the study instance UIDs currently held by orthanc
+	 */
+	private void removeStudiesDeletedFromOrthanc(OrthancConfiguration config, Set<String> remoteStudyInstanceUIDs) {
+		for (DicomStudy localStudy : dao.getByConfiguration(config)) {
+			if (!remoteStudyInstanceUIDs.contains(localStudy.getStudyInstanceUID())) {
+				if (localStudy.getMrsPatient() != null) {
+					log.warn("Removing study " + localStudy.getStudyInstanceUID() + " assigned to patient "
+					        + localStudy.getMrsPatient().getId() + ": no longer present on " + config.getOrthancBaseUrl());
+				} else {
+					log.info("Removing study " + localStudy.getStudyInstanceUID() + ": no longer present on "
+					        + config.getOrthancBaseUrl());
+				}
+				dao.remove(localStudy);
+			}
 		}
 	}
 	
