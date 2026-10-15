@@ -13,16 +13,20 @@
  */
 package org.openmrs.module.imaging.web.controller;
 
-import me.xdrop.fuzzywuzzy.FuzzySearch;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.openmrs.Patient;
 import org.openmrs.api.PatientService;
 import org.openmrs.api.context.Context;
 import org.openmrs.module.imaging.ImagingConstants;
+import org.openmrs.module.imaging.ImagingProperties;
 import org.openmrs.module.imaging.OrthancConfiguration;
 import org.openmrs.module.imaging.api.DicomStudyService;
 import org.openmrs.module.imaging.api.OrthancConfigurationService;
+import org.openmrs.module.imaging.api.OverrideReasonRequiredException;
+import org.openmrs.module.imaging.api.match.MatchScoreCalculator;
+import org.openmrs.module.imaging.api.match.MatchThresholds;
+import org.openmrs.module.imaging.api.match.MatchTier;
 import org.openmrs.module.imaging.api.study.DicomInstance;
 import org.openmrs.module.imaging.api.study.DicomSeries;
 import org.openmrs.module.imaging.api.study.DicomStudy;
@@ -91,10 +95,19 @@ public class DicomStudyController {
         studiesWithScore.studies = DicomStudyResponse.createResponse(studies);
         studiesWithScore.scores = new HashMap<String,Integer>();
         for (DicomStudy study : studies) {
-            // FuzzySearch by https://github.com/xdrop/fuzzywuzzy?tab=readme-ov-file
-            int score = FuzzySearch.tokenSetRatio(patient.getGivenName() + " " + patient.getFamilyName(),
-                    study.getPatientName());
+            // Combines fuzzy name similarity with any available DICOM PatientID/PatientBirthDate
+            // signals - see DicomStudyServiceImpl#computeMatchScore.
+            int score = dicomStudyService.computeMatchScore(patient, study);
             studiesWithScore.scores.put(study.getStudyInstanceUID(), score);
+        }
+
+        ImagingProperties imagingProperties = Context.getRegisteredComponent("imagingProperties", ImagingProperties.class);
+        MatchThresholds thresholds = imagingProperties.getMatchThresholds();
+        Map<String, MatchTier> tiers = MatchScoreCalculator.classify(studiesWithScore.scores, thresholds,
+                imagingProperties.getHighestMinimumScore());
+        studiesWithScore.tiers = new HashMap<String, String>();
+        for (Map.Entry<String, MatchTier> entry : tiers.entrySet()) {
+            studiesWithScore.tiers.put(entry.getKey(), entry.getValue().name());
         }
 
         return new ResponseEntity<>(studiesWithScore, HttpStatus.OK);
@@ -211,27 +224,35 @@ public class DicomStudyController {
 	 * @param studyId The dicom study ID
 	 * @param patientUuid The openmrs patient unique ID
 	 * @param isAssign The study is for the patient.
+	 * @param overrideReason Typed justification, required to assign a Medium/Low/Very Low match.
 	 */
 	@RequestMapping(value="/assingstudy", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
     @Transactional
     public ResponseEntity<Object> assignStudy(@RequestParam(value="studyId") int studyId,
                                               @RequestParam(value="patient") String patientUuid,
                                               @RequestParam(value="isAssign") boolean isAssign,
+                                              @RequestParam(value="overrideReason", required=false) String overrideReason,
                                               HttpServletRequest request,
                                               HttpServletResponse response ) {
-        PatientService patientService = Context.getPatientService();
-        DicomStudyService dicomStudyService = Context.getService(DicomStudyService.class);
-        DicomStudy study = dicomStudyService.getDicomStudy(studyId);
-        Patient patient = patientService.getPatientByUuid(patientUuid);
-
         // Check if studyId or patientUuid is missing
         if (studyId <= 0|| patientUuid == null || patientUuid.trim().isEmpty()) {
             return new ResponseEntity<>("studyId or patient UUID is missing", HttpStatus.BAD_REQUEST);
         }
-        if (isAssign) {
-            study.setMrsPatient(patient);
-        } else {
-            study.setMrsPatient(null);
+        PatientService patientService = Context.getPatientService();
+        DicomStudyService dicomStudyService = Context.getService(DicomStudyService.class);
+        DicomStudy study = dicomStudyService.getDicomStudy(studyId);
+        if (study == null) {
+            return new ResponseEntity<>("Study not found: " + studyId, HttpStatus.NOT_FOUND);
+        }
+        Patient patient = patientService.getPatientByUuid(patientUuid);
+        if (patient == null) {
+            return new ResponseEntity<>("Patient not found: " + patientUuid, HttpStatus.NOT_FOUND);
+        }
+        // Through the service, never study.setMrsPatient(): the match-confidence rule is enforced there.
+        try {
+            dicomStudyService.setPatient(study, isAssign ? patient : null, overrideReason);
+        } catch (OverrideReasonRequiredException e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
         }
         return new ResponseEntity<>("", HttpStatus.OK);
     }

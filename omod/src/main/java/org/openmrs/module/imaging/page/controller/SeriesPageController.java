@@ -52,6 +52,9 @@ public class SeriesPageController {
 			model.addAttribute("studyInstanceUID", dicomStudy.getStudyInstanceUID());
 			ImagingProperties imageProps = Context.getRegisteredComponent("imagingProperties", ImagingProperties.class);
 			model.addAttribute("ohifBaseUrl", imageProps.getOhifBaseUrl());
+			model.addAttribute("ohifAiBaseUrl", imageProps.getOhifAiBaseUrl());
+			model.addAttribute("privilegeUseOhifAi",
+			    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_USE_OHIF_AI));
 			model.addAttribute("privilegeModifyImageData",
 			    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 			

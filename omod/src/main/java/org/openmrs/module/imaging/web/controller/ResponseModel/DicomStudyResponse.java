@@ -39,6 +39,10 @@ public class DicomStudyResponse {
 	
 	private String gender;
 	
+	private String dicomPatientId;
+	
+	private String patientBirthDate;
+	
 	public static DicomStudyResponse createResponse(DicomStudy study) {
 		DicomStudyResponse response = new DicomStudyResponse();
 		response.setId(study.getId());
@@ -49,6 +53,8 @@ public class DicomStudyResponse {
 		response.setStudyDate(study.getStudyDate());
 		response.setStudyDescription(study.getStudyDescription());
 		response.setGender(study.getGender());
+		response.setDicomPatientId(study.getDicomPatientId());
+		response.setPatientBirthDate(study.getPatientBirthDate());
 		response.setOrthancConfiguration(OrthancConfigurationResponse.createResponse(study.getOrthancConfiguration()));
 		return response;
 	}
@@ -119,6 +125,22 @@ public class DicomStudyResponse {
 	
 	public void setGender(String gender) {
 		this.gender = gender;
+	}
+	
+	public String getDicomPatientId() {
+		return dicomPatientId;
+	}
+	
+	public void setDicomPatientId(String dicomPatientId) {
+		this.dicomPatientId = dicomPatientId;
+	}
+	
+	public String getPatientBirthDate() {
+		return patientBirthDate;
+	}
+	
+	public void setPatientBirthDate(String patientBirthDate) {
+		this.patientBirthDate = patientBirthDate;
 	}
 	
 	public void setMrsPatientUuid(String patientUuid) {

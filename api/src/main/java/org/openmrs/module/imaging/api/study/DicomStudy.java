@@ -41,6 +41,21 @@ public class DicomStudy extends BaseOpenmrsData implements java.io.Serializable 
 	
 	private String gender;
 	
+	/**
+	 * The DICOM PatientID tag (0010,0020) as reported by Orthanc for this study, if any. Used
+	 * (alongside {@link #patientBirthDate}) to strengthen the patient-match score beyond a
+	 * name-only comparison. May be {@code null}/empty for studies fetched before this field was
+	 * introduced, or if the modality never populated the tag.
+	 */
+	private String dicomPatientId;
+	
+	/**
+	 * The DICOM PatientBirthDate tag (0010,0030) as reported by Orthanc for this study, if any,
+	 * kept in its raw DICOM format (YYYYMMDD). May be {@code null}/empty, for the same reasons as
+	 * {@link #dicomPatientId}.
+	 */
+	private String patientBirthDate;
+	
 	public DicomStudy() {
 	}
 	
@@ -55,6 +70,14 @@ public class DicomStudy extends BaseOpenmrsData implements java.io.Serializable 
 		this.studyTime = studyTime;
 		this.studyDescription = studyDescription;
 		this.gender = gender;
+	}
+	
+	public DicomStudy(String studyInstanceUID, String orthancStudyUID, Patient patient, OrthancConfiguration config,
+	    String patientName, String studyDate, String studyTime, String studyDescription, String gender,
+	    String dicomPatientId, String patientBirthDate) {
+		this(studyInstanceUID, orthancStudyUID, patient, config, patientName, studyDate, studyTime, studyDescription, gender);
+		this.dicomPatientId = dicomPatientId;
+		this.patientBirthDate = patientBirthDate;
 	}
 	
 	@Override
@@ -138,5 +161,21 @@ public class DicomStudy extends BaseOpenmrsData implements java.io.Serializable 
 	
 	public void setGender(String gender) {
 		this.gender = gender;
+	}
+	
+	public String getDicomPatientId() {
+		return this.dicomPatientId;
+	}
+	
+	public void setDicomPatientId(String dicomPatientId) {
+		this.dicomPatientId = dicomPatientId;
+	}
+	
+	public String getPatientBirthDate() {
+		return this.patientBirthDate;
+	}
+	
+	public void setPatientBirthDate(String patientBirthDate) {
+		this.patientBirthDate = patientBirthDate;
 	}
 }

@@ -17,5 +17,7 @@
         <many-to-one name="orthancConfiguration" column="orthancConfigurationId" class="org.openmrs.module.imaging.OrthancConfiguration" not-null="true"/>
         <property name="studyDescription" type="java.lang.String" column="studyDescription" length="255"/>
         <property name="gender" type="java.lang.String" column="gender" length="100"/>
+        <property name="dicomPatientId" type="java.lang.String" column="dicomPatientId" length="255"/>
+        <property name="patientBirthDate" type="java.lang.String" column="patientBirthDate" length="255"/>
     </class>
 </hibernate-mapping>

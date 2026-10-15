@@ -15,23 +15,34 @@ package org.openmrs.module.imaging.api.impl;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.commons.lang3.StringUtils;
 import org.codehaus.jackson.JsonNode;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.openmrs.Patient;
+import org.openmrs.PatientIdentifier;
+import org.openmrs.User;
 import org.openmrs.api.context.Context;
 import org.openmrs.api.impl.BaseOpenmrsService;
+import org.openmrs.module.imaging.ImagingProperties;
 import org.openmrs.module.imaging.OrthancConfiguration;
 import org.openmrs.module.imaging.api.DicomStudyService;
 import org.openmrs.module.imaging.api.OrthancConfigurationService;
+import org.openmrs.module.imaging.api.OverrideReasonRequiredException;
 import org.openmrs.module.imaging.api.dao.DicomStudyDao;
+import org.openmrs.module.imaging.api.match.IdentityMatch;
+import org.openmrs.module.imaging.api.match.MatchScoreCalculator;
+import org.openmrs.module.imaging.api.match.MatchThresholds;
 import org.openmrs.module.imaging.api.study.DicomInstance;
 import org.openmrs.module.imaging.api.study.DicomSeries;
 import org.openmrs.module.imaging.api.study.DicomStudy;
 import org.springframework.transaction.annotation.Transactional;
 
+import me.xdrop.fuzzywuzzy.FuzzySearch;
+
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.List;
 
@@ -166,8 +177,12 @@ public class DicomStudyServiceImpl extends BaseOpenmrsService implements DicomSt
 		String studyDescription = Optional.ofNullable(
 		    studyData.path("MainDicomTags").path("StudyDescription").getTextValue()).orElse("");
 		String gender = Optional.ofNullable(studyData.path("PatientMainDicomTags").path("Gender").getTextValue()).orElse("");
+		String dicomPatientId = Optional.ofNullable(studyData.path("PatientMainDicomTags").path("PatientID").getTextValue())
+		        .orElse("");
+		String patientBirthDate = Optional.ofNullable(
+		    studyData.path("PatientMainDicomTags").path("PatientBirthDate").getTextValue()).orElse("");
 		DicomStudy study = new DicomStudy(studyInstanceUID, orthancStudyUID, null, config, patientName, studyDate,
-		        studyTime, studyDescription, gender);
+		        studyTime, studyDescription, gender, dicomPatientId, patientBirthDate);
 		
 		DicomStudy existingStudy = dao.getByStudyInstanceUID(config, studyInstanceUID);
 		// new study? -> save new
@@ -177,6 +192,16 @@ public class DicomStudyServiceImpl extends BaseOpenmrsService implements DicomSt
 			// existing study? -> update
 			// DICOM studies are immutable. Only the Orthanc ID can change.
 			existingStudy.setOrthancStudyUID(study.getOrthancStudyUID());
+			// dicomPatientId/patientBirthDate were introduced after some local rows were first
+			// created; backfill them (only) if this row doesn't have a value yet, rather than
+			// waiting for Orthanc to report a "new" study event that will never come for an
+			// already-known study.
+			if (StringUtils.isEmpty(existingStudy.getDicomPatientId())) {
+				existingStudy.setDicomPatientId(study.getDicomPatientId());
+			}
+			if (StringUtils.isEmpty(existingStudy.getPatientBirthDate())) {
+				existingStudy.setPatientBirthDate(study.getPatientBirthDate());
+			}
 			dao.save(existingStudy);
 		}
 	}
@@ -344,9 +369,143 @@ public class DicomStudyServiceImpl extends BaseOpenmrsService implements DicomSt
 	 * @param patient the openmrs patient
 	 */
 	@Override
+	@Transactional(noRollbackFor = OverrideReasonRequiredException.class)
 	public void setPatient(DicomStudy study, Patient patient) {
+		setPatient(study, patient, null);
+	}
+	
+	/**
+	 * The rejection is thrown before anything is modified, so it is exempt from rollback: a caller
+	 * already inside a transaction (e.g. the @Transactional REST controller) can then answer it
+	 * cleanly instead of failing its own commit with UnexpectedRollbackException.
+	 * 
+	 * @param study the dicom study
+	 * @param patient the openmrs patient, or null to unlink
+	 * @param overrideReason the typed justification for a Medium/Low/Very Low match
+	 */
+	@Override
+	@Transactional(noRollbackFor = OverrideReasonRequiredException.class)
+	public void setPatient(DicomStudy study, Patient patient, String overrideReason) {
+		Patient previousPatient = study.getMrsPatient();
+		if (patient != null) {
+			int score = computeMatchScore(patient, study);
+			if (MatchScoreCalculator.requiresOverrideReason(score, getMatchThresholds())) {
+				if (StringUtils.isBlank(overrideReason)) {
+					log.warn("Rejected linking study " + study.getStudyInstanceUID() + " to patient " + patient.getId()
+					        + " (match score " + score + "%) by " + currentUser() + ": no override reason given");
+					throw new OverrideReasonRequiredException(score);
+				}
+				log.warn("Low-confidence link of study " + study.getStudyInstanceUID() + " to patient " + patient.getId()
+				        + " (match score " + score + "%) by " + currentUser() + ". Reason: "
+				        + overrideReason.trim().replaceAll("[\\r\\n]+", " "));
+			}
+		}
+		if (previousPatient != null && patient != null && !previousPatient.getUuid().equals(patient.getUuid())) {
+			log.warn("Study " + study.getStudyInstanceUID() + " moved from patient " + previousPatient.getId()
+			        + " to patient " + patient.getId() + " by " + currentUser());
+		}
 		study.setMrsPatient(patient);
 		dao.save(study);
+	}
+	
+	/**
+	 * Looked up lazily, never as an {@code @Autowired} field: this bean is wired inside a
+	 * transactional proxy while the session factory is being built, and an eager dependency here
+	 * has prevented OpenMRS from starting (BeanCurrentlyInCreationException on sessionFactory).
+	 * 
+	 * @return the configured match thresholds
+	 */
+	protected MatchThresholds getMatchThresholds() {
+		return Context.getRegisteredComponent("imagingProperties", ImagingProperties.class).getMatchThresholds();
+	}
+	
+	private String currentUser() {
+		User user = Context.getAuthenticatedUser();
+		return user == null ? "unknown user" : "user " + user.getUsername() + " (id " + user.getId() + ")";
+	}
+	
+	/**
+	 * @param patient the candidate patient
+	 * @param study the study being matched
+	 * @return a 0-100 match score combining name similarity with any available identity signals
+	 */
+	@Override
+	public int computeMatchScore(Patient patient, DicomStudy study) {
+		if (patient == null || study == null) {
+			return 0;
+		}
+		
+		String patientFullName = StringUtils.trimToEmpty(patient.getGivenName()) + " "
+		        + StringUtils.trimToEmpty(patient.getFamilyName());
+		int nameScore = FuzzySearch.tokenSetRatio(patientFullName, StringUtils.trimToEmpty(study.getPatientName()));
+		
+		IdentityMatch idMatch = matchDicomPatientId(patient, study.getDicomPatientId());
+		IdentityMatch dobMatch = matchDicomPatientBirthDate(patient, study.getPatientBirthDate());
+		
+		return MatchScoreCalculator.computeScore(nameScore, idMatch, dobMatch);
+	}
+	
+	/**
+	 * Compares a DICOM PatientID (tag 0010,0020) against every identifier known for {@code patient}
+	 * (the preferred identifier's UUID - since that is what this module's own worklist generation
+	 * writes into PatientID, see {@code RequestProcedureController} - the preferred identifier's
+	 * plain value, and every other identifier's plain value), so that a match is found however the
+	 * ID ended up in the DICOM header.
+	 * 
+	 * @param patient the candidate patient
+	 * @param dicomPatientId the raw DICOM PatientID value, possibly null/empty
+	 * @return MATCH / MISMATCH / UNKNOWN
+	 */
+	private IdentityMatch matchDicomPatientId(Patient patient, String dicomPatientId) {
+		if (StringUtils.isBlank(dicomPatientId)) {
+			return IdentityMatch.UNKNOWN;
+		}
+		String normalizedDicomId = dicomPatientId.trim();
+		
+		Set<String> candidateIds = new HashSet<String>();
+		if (patient.getPatientIdentifier() != null) {
+			if (patient.getPatientIdentifier().getUuid() != null) {
+				candidateIds.add(patient.getPatientIdentifier().getUuid());
+			}
+			if (patient.getPatientIdentifier().getIdentifier() != null) {
+				candidateIds.add(patient.getPatientIdentifier().getIdentifier());
+			}
+		}
+		if (patient.getIdentifiers() != null) {
+			for (PatientIdentifier identifier : patient.getIdentifiers()) {
+				if (identifier.getIdentifier() != null) {
+					candidateIds.add(identifier.getIdentifier());
+				}
+			}
+		}
+		
+		if (candidateIds.isEmpty()) {
+			return IdentityMatch.UNKNOWN;
+		}
+		for (String candidateId : candidateIds) {
+			if (candidateId.equalsIgnoreCase(normalizedDicomId)) {
+				return IdentityMatch.MATCH;
+			}
+		}
+		return IdentityMatch.MISMATCH;
+	}
+	
+	/**
+	 * Compares a DICOM PatientBirthDate (tag 0010,0030, format YYYYMMDD) against the patient's
+	 * OpenMRS birthdate.
+	 * 
+	 * @param patient the candidate patient
+	 * @param dicomPatientBirthDate the raw DICOM PatientBirthDate value, possibly null/empty
+	 * @return MATCH / MISMATCH / UNKNOWN
+	 */
+	private IdentityMatch matchDicomPatientBirthDate(Patient patient, String dicomPatientBirthDate) {
+		if (StringUtils.isBlank(dicomPatientBirthDate) || patient.getBirthdate() == null) {
+			return IdentityMatch.UNKNOWN;
+		}
+		SimpleDateFormat dicomDateFormat = new SimpleDateFormat("yyyyMMdd");
+		String patientBirthDateDicomStyle = dicomDateFormat.format(patient.getBirthdate());
+		return patientBirthDateDicomStyle.equals(dicomPatientBirthDate.trim()) ? IdentityMatch.MATCH
+		        : IdentityMatch.MISMATCH;
 	}
 	
 	/**

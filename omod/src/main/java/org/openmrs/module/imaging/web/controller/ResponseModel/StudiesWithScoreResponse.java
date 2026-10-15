@@ -21,4 +21,12 @@ public class StudiesWithScoreResponse {
 	public List<DicomStudyResponse> studies;
 	
 	public Map<String, Integer> scores;
+	
+	/**
+	 * Maps each study's StudyInstanceUID to its {@code MatchTier} name (e.g. "HIGHEST",
+	 * "VERY_HIGH", ...), computed from {@link #scores} via {@code MatchScoreCalculator.classify}.
+	 * Exposed as a plain String (rather than the enum itself) to keep JSON serialization simple and
+	 * stable for API consumers.
+	 */
+	public Map<String, String> tiers;
 }

@@ -21,9 +21,20 @@ ${ ui.includeFragment("uicommons", "infoAndErrorMessage")}
     ${ ui.message("imaging.studies") }
 </h2>
 
-<div style="color:red;">
-${param["message"]?.getAt(0) ?: ""}
+<%
+    def statusMessageKey = param["message"]?.getAt(0)
+    def statusMessageType = param["messageType"]?.getAt(0)
+    def statusMessageArgs = []
+    if (param["messageArg0"]) { statusMessageArgs << param["messageArg0"].getAt(0) }
+    if (param["messageArg1"]) { statusMessageArgs << param["messageArg1"].getAt(0) }
+    def statusMessageText = statusMessageKey ? (statusMessageArgs ? ui.message(statusMessageKey, *statusMessageArgs) : ui.message(statusMessageKey)) : ""
+    def statusMessageColor = statusMessageType == "success" ? "green" : "red"
+%>
+<% if (statusMessageText) { %>
+<div style="color:${statusMessageColor};">
+${statusMessageText}
 </div>
+<% } %>
 
 <script>
     function togglePopupUpload() {
@@ -130,6 +141,14 @@ ${param["message"]?.getAt(0) ?: ""}
                            %>
                            <a href="${normalizedOhifBaseUrl}/viewer?StudyInstanceUIDs=${ui.format(study.studyInstanceUID)}" title="${ ui.message("imaging.app.openOHIFView.label") }" target="_blank">
                                <img class="ohif-img" alt="Show image in OHIF viewer" src="${ ui.resourceLink("imaging", "images/ohifViewer.png")}"/></a>
+                           <% } %>
+                           <% /* OHIF-AI: a second, independent viewer. Hidden unless the URL is set AND
+                                 the user holds the privilege - its output reaches the PACS. */ %>
+                           <% if (privilegeUseOhifAi && ohifAiBaseUrl?.trim()) {
+                               def normalizedOhifAiBaseUrl = ohifAiBaseUrl.endsWith("/") ? ohifAiBaseUrl[0..-2] : ohifAiBaseUrl
+                           %>
+                           <a href="${normalizedOhifAiBaseUrl}/viewer?StudyInstanceUIDs=${ui.format(study.studyInstanceUID)}" title="${ ui.message("imaging.app.openOhifAiView.label") }" target="_blank">
+                               <img class="ohif-ai-img" alt="Show image in the AI viewer" src="${ ui.resourceLink("imaging", "images/ohifAiViewer.png")}"/></a>
                            <% } %>
                            <a href="${normalizedBaseUrl}/ui/app/#/filtered-studies?StudyInstanceUID=${ui.format(study.studyInstanceUID)}&expand=study" title="${ ui.message("imaging.app.orthancExplorer.label") }">
                                <img class="orthanc-img" alt="Show image data in Orthanc explorer" src="${ ui.resourceLink("imaging", "images/orthanc.png")}"/></a>

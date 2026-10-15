@@ -169,4 +169,23 @@
                                  referencedColumnNames="id"/>
     </changeSet>
 
+    <changeSet id="302" author="imaging-module">
+        <preConditions onFail="MARK_RAN">
+            <tableExists tableName="${project.parent.artifactId}_DicomStudy"/>
+            <not>
+                <columnExists tableName="${project.parent.artifactId}_DicomStudy" columnName="dicomPatientId"/>
+            </not>
+        </preConditions>
+        <comment>
+            Add dicomPatientId (DICOM PatientID, tag 0010,0020) and patientBirthDate (DICOM
+            PatientBirthDate, tag 0010,0030) to imaging_DicomStudy. These support a stronger,
+            identifier-based patient-match score alongside the existing name-only fuzzy match, to
+            reduce the risk of assigning a study to the wrong patient.
+        </comment>
+        <addColumn tableName="${project.parent.artifactId}_DicomStudy">
+            <column name="dicomPatientId" type="varchar(255)"/>
+            <column name="patientBirthDate" type="varchar(255)"/>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

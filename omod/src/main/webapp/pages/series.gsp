@@ -119,6 +119,14 @@ ${param["message"]?.getAt(0) ?: ""}
                             <a href="${normalizedOhifBaseUrl}/viewer?StudyInstanceUIDs=${studyInstanceUID}" title="${ ui.message("imaging.app.openOHIFView.label") }" target="_blank">
                                 <img class="ohif-img" alt="Show image in OHIF viewer" src="${ ui.resourceLink("imaging", "images/ohifViewer.png")}"/></a>
                         <% } %>
+                        <% /* OHIF-AI: a second, independent viewer. Hidden unless the URL is set AND
+                              the user holds the privilege - its output reaches the PACS. */ %>
+                        <% if (privilegeUseOhifAi && ohifAiBaseUrl?.trim()) {
+                            def normalizedOhifAiBaseUrl = ohifAiBaseUrl.endsWith("/") ? ohifAiBaseUrl[0..-2] : ohifAiBaseUrl
+                        %>
+                        <a href="${normalizedOhifAiBaseUrl}/viewer?StudyInstanceUIDs=${studyInstanceUID}" title="${ ui.message("imaging.app.openOhifAiView.label") }" target="_blank">
+                                <img class="ohif-ai-img" alt="Show image in the AI viewer" src="${ ui.resourceLink("imaging", "images/ohifAiViewer.png")}"/></a>
+                        <% } %>
                         <a href="${normalizedBaseUrl}/ui/app/#/filtered-studies?StudyInstanceUID=${studyInstanceUID}&expand=series" title="${ ui.message("imaging.app.orthancExplorer.label") }">
                             <img class="orthanc-img" alt="Show image data in Orthanc explorer" src="${ ui.resourceLink("imaging", "images/orthanc.png")}"/></a>
                         <% if (medreportAvailable) { %>

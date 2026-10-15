@@ -118,7 +118,7 @@ body {
     width: 28px;
 }
 
-.table td, .ohif-img, .orthanc-img, .new-img{
+.table td, .ohif-img, .ohif-ai-img, .orthanc-img, .new-img{
     width: 28px;
     margin-left: 12px;
 }

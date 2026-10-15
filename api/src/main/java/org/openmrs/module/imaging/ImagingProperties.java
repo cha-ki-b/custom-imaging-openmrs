@@ -20,6 +20,8 @@ import org.openmrs.Concept;
 import org.openmrs.api.APIException;
 import org.openmrs.api.AdministrationService;
 import org.openmrs.api.ConceptService;
+import org.openmrs.module.imaging.api.match.MatchScoreCalculator;
+import org.openmrs.module.imaging.api.match.MatchThresholds;
 import org.apache.commons.logging.Log;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -92,5 +94,74 @@ public class ImagingProperties {
 	 */
 	public String getOhifBaseUrl() {
 		return administrationService.getGlobalProperty(ImagingConstants.GP_OHIF_BASE_URL);
+	}
+	
+	/**
+	 * @return the configured OHIF-AI viewer base URL (e.g. https://ai-viewer.hospital.lan), or null
+	 *         if not configured, in which case the AI button is not rendered
+	 */
+	public String getOhifAiBaseUrl() {
+		return administrationService.getGlobalProperty(ImagingConstants.GP_OHIF_AI_BASE_URL);
+	}
+	
+	/**
+	 * @return the configured {@link MatchThresholds}, built from the 4 match-threshold global
+	 *         properties. Falls back to {@link MatchThresholds#defaults()} (95/75/50/25) - logging
+	 *         a warning - if any of the global properties is missing/non-numeric, or if the 4
+	 *         values are not in a valid, strictly-decreasing order. This method never throws: a
+	 *         misconfigured threshold must not break the "Get studies"/worklist matching screens.
+	 */
+	public MatchThresholds getMatchThresholds() {
+		int veryHigh = getIntGlobalProperty(ImagingConstants.GP_MATCH_THRESHOLD_VERY_HIGH, MatchThresholds.DEFAULT_VERY_HIGH);
+		int high = getIntGlobalProperty(ImagingConstants.GP_MATCH_THRESHOLD_HIGH, MatchThresholds.DEFAULT_HIGH);
+		int medium = getIntGlobalProperty(ImagingConstants.GP_MATCH_THRESHOLD_MEDIUM, MatchThresholds.DEFAULT_MEDIUM);
+		int low = getIntGlobalProperty(ImagingConstants.GP_MATCH_THRESHOLD_LOW, MatchThresholds.DEFAULT_LOW);
+		try {
+			return new MatchThresholds(veryHigh, high, medium, low);
+		}
+		catch (IllegalArgumentException e) {
+			log.warn("Invalid imaging match thresholds configured (veryHigh=" + veryHigh + ", high=" + high + ", medium="
+			        + medium + ", low=" + low + "): " + e.getMessage()
+			        + ". Falling back to default thresholds (95/75/50/25).");
+			return MatchThresholds.defaults();
+		}
+	}
+	
+	/**
+	 * @return the minimum score the best candidate must reach to be labelled "Highest", from
+	 *         imaging.matchThreshold.highestMinimum. Validated on its own, independently of the 4
+	 *         band thresholds: falls back to {@link MatchScoreCalculator#DEFAULT_HIGHEST_MINIMUM}
+	 *         (90), logging a warning, if missing, non-numeric or outside [0, 100]. Never throws.
+	 */
+	public int getHighestMinimumScore() {
+		int value = getIntGlobalProperty(ImagingConstants.GP_MATCH_THRESHOLD_HIGHEST_MINIMUM,
+		    MatchScoreCalculator.DEFAULT_HIGHEST_MINIMUM);
+		if (value < 0 || value > 100) {
+			log.warn("Global property " + ImagingConstants.GP_MATCH_THRESHOLD_HIGHEST_MINIMUM
+			        + " must be between 0 and 100, got " + value + ". Using default "
+			        + MatchScoreCalculator.DEFAULT_HIGHEST_MINIMUM + ".");
+			return MatchScoreCalculator.DEFAULT_HIGHEST_MINIMUM;
+		}
+		return value;
+	}
+	
+	/**
+	 * @param globalPropertyName the global property name
+	 * @param defaultValue the value to use if the global property is missing or not a valid integer
+	 * @return the global property parsed as an int, or {@code defaultValue}
+	 */
+	private int getIntGlobalProperty(String globalPropertyName, int defaultValue) {
+		String globalProperty = administrationService.getGlobalProperty(globalPropertyName);
+		if (StringUtils.isEmpty(globalProperty)) {
+			return defaultValue;
+		}
+		try {
+			return Integer.parseInt(globalProperty.trim());
+		}
+		catch (NumberFormatException e) {
+			log.warn("Global property " + globalPropertyName + " has non-numeric value '" + globalProperty
+			        + "'. Using default " + defaultValue + ".");
+			return defaultValue;
+		}
 	}
 }
