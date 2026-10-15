@@ -291,3 +291,340 @@ them; a mixed-ending file produces confusing diffs.
 
 The build runs `maven-java-formatter-plugin`, which **rewrites sources in place**. Expect
 your formatting to be normalised, and re-read files after a build before diffing.
+
+# Patient-match confidence scoring (1.3.0)
+
+Every study fetched from Orthanc ("Get studies") is unassigned to any patient by design (see
+`createOrUpdateStudy` — `mrsPatient` is always `null` on create). Linking a study to the right
+patient has always been a **manual step** on `syncStudies.gsp`, guided only by a bare fuzzy
+name-similarity percentage in a "Match" column, with no default sort, no default filter, and a
+checkbox that submits immediately with no confirmation. On a page listing every study in the whole
+system, a percentage a few pixels away from the wrong row is an easy misclick — e.g. mistaking an
+80% match on Patient B for the 99% match on Patient A one row above/below it.
+
+This change makes that percentage more trustworthy and easier to read at a glance. It does **not**
+by itself add the confirmation step, default sort/filter, or "already assigned to another patient"
+warning discussed for the same problem — see "What this does not do yet" below.
+
+## The whole change
+
+| File | Change |
+| --- | --- |
+| `DicomStudy`, `DicomStudy.hbm.xml`, `liquibase.xml` (changeset `302`) | new `dicomPatientId` / `patientBirthDate` columns, populated from the DICOM PatientID (0010,0020) / PatientBirthDate (0010,0030) tags |
+| `api/pom.xml` | added the `fuzzywuzzy` dependency (name-similarity scoring moved from `omod` into the `api` service layer, see below) |
+| `api/.../api/match/` (new package) | `IdentityMatch`, `MatchTier`, `MatchThresholds`, `MatchScoreCalculator` — framework-independent scoring/tiering logic |
+| `ImagingConstants` | 4 new global property keys, `GP_MATCH_THRESHOLD_*` |
+| `ImagingProperties` | `getMatchThresholds()`, with safe fallback to defaults on missing/invalid configuration |
+| `DicomStudyService` / `DicomStudyServiceImpl` | new `computeMatchScore(Patient, DicomStudy)`, replacing the two duplicated `FuzzySearch.tokenSetRatio(...)` call sites that used to live directly in the controllers |
+| `SyncStudiesPageController`, `DicomStudyController` (`/studiesbyconfig`) | call the new service method instead of `FuzzySearch` directly; both now also expose a `MatchTier` per study |
+| `StudiesWithScoreResponse`, `DicomStudyResponse` | REST responses now include `tiers` and the two new DICOM fields |
+| `config.xml` | 4 new global properties, defaults `95` / `75` / `50` / `25` |
+| `syncStudies.gsp` | new "Confidence" column showing a colored tier badge next to the raw percentage |
+| `messages.properties`, `messages_fr.properties` | tier labels and the new column header |
+
+### How the score is computed
+
+`DicomStudyServiceImpl.computeMatchScore(patient, study)`:
+
+1. A fuzzy name-similarity score (0-100) between `patient.givenName + " " + patient.familyName` and
+   `study.getPatientName()`, exactly as before (`FuzzySearch.tokenSetRatio`, unchanged).
+2. Compares `study.getDicomPatientId()` against **every** identifier OpenMRS has for the patient:
+   the preferred identifier's UUID (this module's own worklist generation writes the identifier
+   **UUID**, not the plain value, into the DICOM PatientID tag — see `RequestProcedureController`),
+   the preferred identifier's plain value, and every other identifier's plain value. This is an
+   `IdentityMatch`: `MATCH`, `MISMATCH`, or `UNKNOWN` if the DICOM tag is empty.
+3. Compares `study.getPatientBirthDate()` (raw DICOM `yyyyMMdd`) against `patient.getBirthdate()`,
+   the same three-way way.
+4. Combines them (`MatchScoreCalculator.computeScore`):
+   - An identifier `MATCH` is treated as conclusive and forces the score to **100**, regardless of
+     the name score or the birthdate.
+   - Otherwise, start from the name score, subtract **40** for an identifier `MISMATCH` (two
+     different real people can share a name; they should not share an identifier), add **5** for a
+     birthdate `MATCH`, subtract **15** for a birthdate `MISMATCH`.
+   - `UNKNOWN` never changes the score. Older studies fetched before this change have no
+     `dicomPatientId`/`patientBirthDate` yet, so they score exactly as they did before, until their
+     next "Get studies" backfills the two new fields (see below).
+   - Result is always clamped to `[0, 100]`.
+
+These adjustment constants (`ID_MISMATCH_PENALTY`, `DOB_MATCH_BONUS`, `DOB_MISMATCH_PENALTY`) are
+plain constants in `MatchScoreCalculator`, not global properties — only the 4 tier thresholds were
+asked to be admin-configurable. Tune them there if needed.
+
+### The 6 confidence tiers
+
+| Tier | Color | Band (default thresholds) |
+| --- | --- | --- |
+| Highest | blue | *relative*, see below |
+| Very High | dark green | score ≥ `imaging.matchThreshold.veryHigh` (95) |
+| High | green | score ≥ `imaging.matchThreshold.high` (75) |
+| Medium | yellow | score ≥ `imaging.matchThreshold.medium` (50) |
+| Low | red | score ≥ `imaging.matchThreshold.low` (25) |
+| Very Low | dark red | score below the Low threshold |
+
+**"Highest" is relative, not absolute.** `MatchScoreCalculator.classify(scoresByKey, thresholds)`
+looks at every score being displayed together (e.g. every study on one patient's sync page) and
+marks whichever one (or, in a tie, ones) has the *highest* score in that specific list as
+"Highest" — overriding whatever absolute band it would otherwise fall into. If every candidate is a
+poor match, the least-bad one is still labelled "Highest". **The raw percentage is always shown
+next to the badge for exactly this reason** — do not remove it, and do not treat "Highest" alone as
+a green light.
+
+As a guard against a degenerate case (e.g. a page full of studies with no captured patient name at
+all, all scoring 0), "Highest" is only applied when the maximum score in the list is strictly
+greater than 0; otherwise every row falls back to its plain "Very Low" band instead of every single
+row misleadingly reading "Highest".
+
+> **Superseded in 1.5.1:** "Highest" now also requires the best score to reach
+> `imaging.matchThreshold.highestMinimum` (default 90). See the 1.5.1 section below.
+
+## Deployment
+
+The 4 thresholds are ordinary global properties, editable at
+**Administration → Maintenance → Settings → Imaging**:
+
+```
+imaging.matchThreshold.veryHigh = 95
+imaging.matchThreshold.high     = 75
+imaging.matchThreshold.medium   = 50
+imaging.matchThreshold.low      = 25
+```
+
+They must be a strictly decreasing sequence in `[0, 100]` (`veryHigh > high > medium > low >= 0`).
+`ImagingProperties.getMatchThresholds()` never throws: if any value is missing, non-numeric, or the
+4 values are not in a valid order, it logs a `warn` and **falls back to the full default set**
+(95/75/50/25) rather than applying a partial fix — a half-corrected, still-invalid ordering would
+be worse than obviously-wrong defaults.
+
+The two new `imaging_DicomStudy` columns are added by `liquibase.xml` changeset `302`,
+which runs automatically the next time the module starts — no manual DB step needed. Existing rows
+get `dicomPatientId`/`patientBirthDate` backfilled the next time "Get studies" runs, **only** if the
+row doesn't already have a value (see the comment in `createOrUpdateStudy`); this is a deliberate,
+narrow exception to this codebase's existing "DICOM studies are immutable" handling, made only for
+fields that could not have been captured before this change existed.
+
+## What this does not do yet
+
+This is scoring/display only. It does not yet:
+- Default-sort or default-filter the "Get studies" list by score (it's still every study in the
+  system, in whatever order the DB returns it).
+- Ask for confirmation before assigning a study, regardless of tier.
+- Show which patient a study is *currently* assigned to before you reassign it.
+- Enforce anything server-side — a REST client can still call `/assingstudy` with a Very-Low-tier
+  study and no override reason.
+
+These were scoped as later phases of the same "prevent the misclick" plan and are not implemented
+here.
+
+> **All four are implemented in 1.5.1** — see the section at the end of this file.
+
+# Translation encoding fix & status-message i18n (1.3.0)
+
+## Accented characters rendering as "unknown character" boxes
+
+`messages_fr.properties`, `messages_de.properties`, `messages_es.properties` and
+`messages_it.properties` were saved on disk as **ISO-8859-1 (Latin-1)**, not UTF-8, most likely by
+a translator's editor defaulting to that encoding. OpenMRS's module message loader reads
+`.properties` resources as UTF-8. A Latin-1 accented character is a single byte (e.g. `é` is
+`0xE9`), which is **not a valid standalone UTF-8 byte** (`0xE9` starts a 3-byte UTF-8 sequence that
+never gets completed), so the JVM's UTF-8 decoder replaces it with U+FFFD, the "unknown character"
+replacement glyph — exactly the boxes reported.
+
+This was confirmed byte-for-byte, not guessed: decoding each file strictly as UTF-8 raised
+`UnicodeDecodeError: invalid continuation byte` at the position of every accented character, and
+re-decoding the same bytes as ISO-8859-1 produced perfectly correct French/German/Spanish/Italian
+text.
+
+**Fix:** all 4 files were re-encoded from ISO-8859-1 to UTF-8 — the text content is byte-for-byte
+unchanged in meaning, only the encoding of the file itself changed, so every existing translation
+now round-trips correctly. `messages.properties` (English) and `messages_pl.properties` (Polish)
+were already valid UTF-8 (the Polish file has no accented characters in its current translations)
+and were left untouched. No BOM was introduced (OpenMRS/Java property loaders do not expect one).
+
+> If you add or edit any of these 4 files, **save as UTF-8, not your editor's system default** —
+> this is what caused the original bug.
+
+*(Pre-existing and unrelated: `messages_fr.properties` has a typo, "Accun seveur Orthanc configuré"
+for `imaging.app.none` - should read "Aucun serveur Orthanc configuré". Left as-is since it's a
+wording issue, not an encoding one, and wasn't part of what broke here.)*
+
+## Status messages were English-only and always shown in red
+
+`StudiesPageController` (`uploadStudy`, `syncStudy`, `deleteStudy`, and the
+`MaxUploadSizeExceededException` handler) built its user-facing status message as a **plain,
+hardcoded English `String`**, passed as a `message` redirect attribute and echoed verbatim by
+`studies.gsp` / `syncStudies.gsp` inside a hardcoded `color:red` `<div>`:
+
+```gsp
+<div style="color:red;">
+${param["message"]?.getAt(0) ?: ""}
+</div>
+```
+
+Two independent problems followed directly from this:
+- The text was never translated — it bypassed `ui.message()` entirely, unlike everything else in
+  these pages — so it stayed in English regardless of the user's locale.
+- It was **always red**, including "Studies successfully fetched" and "All files uploaded" - a
+  success is not supposed to look like an error.
+
+### The whole change
+
+| File | Change |
+| --- | --- |
+| `StudiesPageController` | every message is now a **message key** (e.g. `imaging.studies.fetch.success`) plus a `messageType` (`"success"` / `"error"`) redirect attribute; the two messages with dynamic content (`upload.partial`, `study.delete.error`) also pass `messageArg0`/`messageArg1` |
+| `studies.gsp`, `syncStudies.gsp` | resolve the key via `ui.message(key)` (or `ui.message(key, args)` when args are present) and pick `green` for `"success"` / `red` for anything else; render nothing when there is no message |
+| `messages.properties`, `messages_fr.properties` | the 9 new keys, in English and French |
+
+Mapping of every message this touches:
+
+| Key | Type | English | French |
+| --- | --- | --- | --- |
+| `imaging.studies.fetch.success` | success | Studies successfully fetched | Études récupérées avec succès |
+| `imaging.studies.fetch.error` | error | Not all studies could be downloaded successfully... | Certaines études n'ont pas pu être téléchargées... |
+| `imaging.studies.upload.none` | error | No files to upload | Aucun fichier à envoyer |
+| `imaging.studies.upload.all` | success | All files uploaded | Tous les fichiers ont été envoyés |
+| `imaging.studies.upload.partial` | error | Some files could not be uploaded. {0} of {1} files uploaded. | Certains fichiers n'ont pas pu être envoyés. {0} sur {1} fichiers envoyés. |
+| `imaging.studies.upload.maxSizeExceeded` | error | File size exceeds maximum upload limit... | La taille du fichier dépasse la limite autorisée... |
+| `imaging.study.delete.success` | success | Study successfully deleted | Étude supprimée avec succès |
+| `imaging.study.delete.error` | error | Deletion of study failed. Reason: {0} | Échec de la suppression de l'étude. Raison : {0} |
+| `imaging.study.delete.denied` | error | Permission denied... | Autorisation refusée... |
+
+`imaging.studies.upload.none` (nothing was selected) is classified `"error"` rather than
+`"success"`, matching its original always-red presentation - nothing was actually accomplished, so
+green would be misleading.
+
+### A note on the two messages with dynamic content
+
+`imaging.studies.upload.partial` and `imaging.study.delete.error` use `{0}`/`{1}` placeholders
+resolved via `ui.message(key, args)`, i.e. `java.text.MessageFormat`. **Any literal apostrophe in a
+message that has placeholders must be doubled (`''`)**, or `MessageFormat` will misparse it as the
+start of a quoted literal — this is why the French text reads `n''ont` and `l''étude` in the
+`.properties` file for these two keys specifically, while every apostrophe in a plain, no-argument
+message (e.g. `n'ont` in `imaging.studies.fetch.error`) is left as a single `'`. Get this backwards
+in either direction and the rendered text is wrong - either a stray double-apostrophe (over-escaped)
+or a swallowed word (under-escaped, on any message that does have arguments).
+
+## Version bump
+
+This release, encompassing the patient-match confidence scoring above and both fixes in this
+section, is `1.3.0`. Updated in `pom.xml`, `api/pom.xml` and `omod/pom.xml` (module version and the
+`imaging-api` inter-module dependency version); `config.xml`'s `<version>` is
+`${project.parent.version}` and picks this up automatically at build time.
+
+# Patient-match safety: fixes and server-side enforcement (1.5.1)
+
+Feature line "1.3.x" of the patient-match safety project, shipped as artifact **`imaging-1.5.1.omod`**:
+the server already ran `imaging-1.5.0` (1.3.0 features + OHIF-AI), and OpenMRS treats a lower
+version number as a downgrade.
+
+## The whole change
+
+| File | Change |
+| --- | --- |
+| `DicomStudyService` / `DicomStudyServiceImpl` | new `setPatient(study, patient, overrideReason)`; the 2-arg `setPatient` delegates to it with no reason. Rejects a Medium/Low/Very Low link without a reason, logs the reason, logs every move between two patients |
+| `OverrideReasonRequiredException` (new) | thrown on rejection; carries the score |
+| `MatchScoreCalculator` | `classify(...)` takes a third argument, the "Highest" minimum; new `requiresOverrideReason(score, thresholds)` — the single rule used by both the dialog and the service |
+| `ImagingConstants`, `ImagingProperties`, `config.xml` | new global property `imaging.matchThreshold.highestMinimum` (default 90), `getHighestMinimumScore()` |
+| `DicomStudyController` (`/assingstudy`) | goes through `DicomStudyService.setPatient` (was `study.setMrsPatient`), 404 on unknown study/patient, optional `overrideReason`, 400 when a required reason is missing |
+| `SyncStudiesPageController` | `message` optional; new `showAll`; sorts by score; hides Very Low; exposes `reasonRequired`; assignment passes the reason and reports results as message keys |
+| `syncStudies.gsp` | "Currently linked to" column + tooltip, show-all/hide links, confirmation dialog with typed-reason field |
+| `studies.gsp`, `syncStudies.gsp` | `ui.message(key, *args)` (see below) |
+| `messages.properties`, `messages_fr.properties` | new keys; plus the pre-existing missing keys/typo listed in the HANDOFF |
+| `api/src/test/...` (new) | `MatchScoreCalculatorTest`, `DicomStudyServiceImplSetPatientTest` |
+
+## Server-side rule
+
+`DicomStudyServiceImpl.setPatient(study, patient, overrideReason)` is the only code that changes a
+study's patient link. When `patient` is not null, it computes the match score itself; if the
+absolute band is Medium, Low or Very Low (score below `imaging.matchThreshold.high`) and the
+reason is blank, it logs a `warn` and throws `OverrideReasonRequiredException` **before modifying
+anything**. The relative "Highest" label never waives the rule. Unlinking needs no reason.
+
+Log lines (`warn`, logger `DicomStudyServiceImpl`), with user name and id:
+- `Rejected linking study <UID> to patient <id> (match score N%) by user ...: no override reason given`
+- `Low-confidence link of study <UID> to patient <id> (match score N%) by user .... Reason: ...`
+  (line breaks in the reason are replaced by spaces, so a reason cannot forge extra log lines)
+- `Study <UID> moved from patient <id> to patient <id> by user ...` — whatever the score.
+
+The reason is **only** logged, not stored in the database (a decision taken for 1.5.1).
+
+The thresholds are fetched lazily inside the method, via
+`Context.getRegisteredComponent("imagingProperties", ...)` in `getMatchThresholds()` — **not** as an
+`@Autowired` field, which has prevented OpenMRS from starting (see HANDOFF).
+
+Both `setPatient` methods carry `@Transactional(noRollbackFor = OverrideReasonRequiredException.class)`:
+the `/assingstudy` controller is itself `@Transactional`, and a rollback-marked shared transaction
+would make its commit fail (500) instead of returning the intended 400.
+
+**REST behaviour change:** `POST /ws/rest/v1/imaging/assingstudy` with `isAssign=true` and a score
+below the "High" threshold now returns **400** unless `overrideReason` is sent. Any client of this
+endpoint (an OpenMRS 3 frontend, scripts) must send it.
+
+## "Highest" minimum
+
+```
+imaging.matchThreshold.highestMinimum = 90
+```
+
+The best candidate is labelled "Highest" only if its score is ≥ this value (and > 0). Below it,
+it shows its plain band, so a 34% best match reads "Low", not "Highest". Validated on its own —
+missing, non-numeric or outside [0, 100] → 90 with a `warn` — and deliberately independent of the
+4 band thresholds: it may sit above or below `veryHigh`.
+
+## "Get studies" page
+
+- Sorted by score, best first (the column headers can still re-sort).
+- Very Low matches are hidden by default, with a count and a "Show all studies" link; when shown,
+  a "Hide very low matches" link. A study already linked to the patient being viewed is never
+  hidden, so its link can always be removed.
+- "Currently linked to" names the patient a study is linked to now (any patient), with the
+  identifier, "(this patient)" when it is the one being viewed, and "No patient linked yet"
+  otherwise. Its header tooltip explains the column and the checkbox. The tooltip is on an inner
+  `<span>`: `filter_table.js` gives no filter box to a `<th>` that has any attribute.
+- Ticking or unticking a checkbox opens a dialog and changes nothing until "Confirm". It names
+  the patient being viewed, the study, the score and band; warns, naming them, when the study is
+  linked to another patient; and for Medium/Low/Very Low requires a typed reason (Confirm stays
+  disabled until one is typed). The page computes "reason required" with the same
+  `requiresOverrideReason` as the service, which enforces it anyway.
+
+### Bug fixed: `message` parameter
+
+`SyncStudiesPageController.get` declared `message` as required; the show-all/hide links reach the
+page without it, which failed with `MissingRequiredParameterException: Required: message`. It is
+now `required = false, defaultValue = ""`. In uiframework 3.22.0 (`UiFrameworkUtil`), a missing
+parameter with a `defaultValue` takes the default **before** the `required` check — verified in the
+deployed framework's bytecode, not assumed.
+
+### Bug fixed: message arguments rendered as a list
+
+`ui.message(key, statusMessageArgs)` passed a Groovy `List` to the `Object...` parameter. Groovy
+wraps it as **one** argument, so "{0} of {1} files uploaded" rendered as "[3, 5] of {1} files
+uploaded". Both pages now spread it: `ui.message(key, *statusMessageArgs)`. Verified with Groovy
+2.4.20, the server's version.
+
+## How this was tested
+
+- Unit tests (JUnit 4.11, no database or Spring): the "Highest" minimum and `requiresOverrideReason`
+  (`MatchScoreCalculatorTest`); rejection with nothing saved, the 2-arg method not bypassing the
+  rule, reason logging, identifier match, unlinking, and move logging, with the real log4j output
+  captured (`DicomStudyServiceImplSetPatientTest`). Disabling the rules makes 8 of the 16 tests fail.
+  The offline Maven repository lacks the surefire JUnit4 provider, so these were run with
+  `org.junit.runner.JUnitCore` on the module's test classpath; with network access,
+  `mvn test` runs them normally.
+- `syncStudies.gsp` rendered through `groovy.text.SimpleTemplateEngine` (Groovy 2.4.20, as used by
+  uiframework 3.22.0) with real `Patient`/`DicomStudy`/`MatchTier` objects and the real en/fr
+  message files: 22 checks, including no unresolved message keys.
+- The confirmation dialog's JavaScript was exercised in headless Chrome on the rendered page:
+  15 checks.
+
+**Not tested: a real running OpenMRS.** Spring wiring, the real HTTP parameter binding and the
+transaction behaviour above can only be confirmed there — see the smoke-test checklist in the
+HANDOFF before considering this release done.
+
+## Build
+
+```bash
+mvn package -DskipTests
+```
+
+Do not use `mvn clean` casually: it deletes the previous `.omod` files in `omod/target/`, which
+are the only rollback copies.

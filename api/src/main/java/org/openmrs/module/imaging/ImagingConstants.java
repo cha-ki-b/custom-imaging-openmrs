@@ -26,4 +26,51 @@ public class ImagingConstants {
 	public static final String GP_OHIF_BASE_URL = "imaging.ohifBaseUrl";
 	
 	public static final String PRIVILEGE_EDIT_WORKLIST = "Task: Edit Worklist";
+	
+	/**
+	 * Lower bound (inclusive), out of 100, of the "Very High" patient-match confidence band. Must
+	 * be greater than {@link #GP_MATCH_THRESHOLD_HIGH}. See
+	 * {@link org.openmrs.module.imaging.api.match.MatchTier}.
+	 */
+	public static final String GP_MATCH_THRESHOLD_VERY_HIGH = "imaging.matchThreshold.veryHigh";
+	
+	/**
+	 * Lower bound (inclusive), out of 100, of the "High" patient-match confidence band. Must be
+	 * greater than {@link #GP_MATCH_THRESHOLD_MEDIUM} and less than
+	 * {@link #GP_MATCH_THRESHOLD_VERY_HIGH}.
+	 */
+	public static final String GP_MATCH_THRESHOLD_HIGH = "imaging.matchThreshold.high";
+	
+	/**
+	 * Lower bound (inclusive), out of 100, of the "Medium" patient-match confidence band. Must be
+	 * greater than {@link #GP_MATCH_THRESHOLD_LOW} and less than {@link #GP_MATCH_THRESHOLD_HIGH}.
+	 */
+	public static final String GP_MATCH_THRESHOLD_MEDIUM = "imaging.matchThreshold.medium";
+	
+	/**
+	 * Lower bound (inclusive), out of 100, of the "Low" patient-match confidence band. Scores below
+	 * this fall into "Very Low". Must be less than {@link #GP_MATCH_THRESHOLD_MEDIUM}.
+	 */
+	public static final String GP_MATCH_THRESHOLD_LOW = "imaging.matchThreshold.low";
+	
+	/**
+	 * Minimum score (0-100) the best candidate in a list must reach before it is labelled
+	 * "Highest". Independent of the 4 band thresholds above. See
+	 * {@link org.openmrs.module.imaging.api.match.MatchScoreCalculator#classify}.
+	 */
+	public static final String GP_MATCH_THRESHOLD_HIGHEST_MINIMUM = "imaging.matchThreshold.highestMinimum";
+	
+	/**
+	 * Base URL of the OHIF-AI viewer. Deliberately separate from GP_OHIF_BASE_URL: OHIF-AI is a
+	 * second, independent viewer, and the routine one must keep working whether or not it is
+	 * deployed. Left empty, the AI button does not appear.
+	 */
+	public static final String GP_OHIF_AI_BASE_URL = "imaging.ohifAiBaseUrl";
+	
+	/**
+	 * Opening a study in the AI viewer is privileged. Its segmentations are written back to the
+	 * PACS as real clinical data, so access is granted deliberately rather than to everyone who can
+	 * reach the studies table.
+	 */
+	public static final String PRIVILEGE_USE_OHIF_AI = "Task: Use AI Imaging Viewer";
 }

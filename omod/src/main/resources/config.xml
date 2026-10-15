@@ -69,6 +69,11 @@
 		<description>Able to add, delete worklist</description>
 	</privilege>
 
+	<privilege>
+		<name>Task: Use AI Imaging Viewer</name>
+		<description>Able to open studies in the AI imaging viewer (OHIF-AI), whose segmentations are written back to the PACS as clinical data</description>
+	</privilege>
+
 	<!-- Required Global Properties -->
 	<globalProperty>
 		<property>imaging.maxUploadImageDataSize</property>
@@ -84,6 +89,73 @@
 			with no trailing slash. Used to build the "open in OHIF" links on the
 			studies and series pages - separate from the Orthanc server URLs below
 			since OHIF is deployed as its own service, not a subpath of Orthanc.
+		</description>
+	</globalProperty>
+
+	<globalProperty>
+		<property>imaging.ohifAiBaseUrl</property>
+		<defaultValue></defaultValue>
+		<description>
+			Base URL of the OHIF-AI viewer (e.g. https://ai-viewer.hospital.lan), with no
+			trailing slash. Empty by default, which hides the AI button entirely - the
+			routine OHIF viewer is unaffected either way. Users also need the
+			"Task: Use AI Imaging Viewer" privilege before the button is shown.
+			Set this through the OpenMRS UI, never by SQL: global properties are cached
+			in memory and a direct UPDATE leaves the running instance on the old value.
+		</description>
+	</globalProperty>
+
+	<globalProperty>
+		<property>imaging.matchThreshold.veryHigh</property>
+		<defaultValue>95</defaultValue>
+		<description>
+			Lower bound (0-100, inclusive) of the "Very High" patient-match confidence
+			band shown on the "Get studies" and worklist matching screens. Must be
+			greater than imaging.matchThreshold.high. If this or any of the other 3
+			match-threshold properties is missing, non-numeric, or the 4 values are not
+			strictly decreasing, all 4 fall back to their defaults (95/75/50/25).
+		</description>
+	</globalProperty>
+
+	<globalProperty>
+		<property>imaging.matchThreshold.high</property>
+		<defaultValue>75</defaultValue>
+		<description>
+			Lower bound (0-100, inclusive) of the "High" patient-match confidence band.
+			Must be greater than imaging.matchThreshold.medium and less than
+			imaging.matchThreshold.veryHigh.
+		</description>
+	</globalProperty>
+
+	<globalProperty>
+		<property>imaging.matchThreshold.medium</property>
+		<defaultValue>50</defaultValue>
+		<description>
+			Lower bound (0-100, inclusive) of the "Medium" patient-match confidence
+			band. Must be greater than imaging.matchThreshold.low and less than
+			imaging.matchThreshold.high.
+		</description>
+	</globalProperty>
+
+	<globalProperty>
+		<property>imaging.matchThreshold.low</property>
+		<defaultValue>25</defaultValue>
+		<description>
+			Lower bound (0-100, inclusive) of the "Low" patient-match confidence band.
+			Scores below this value are shown as "Very Low". Must be less than
+			imaging.matchThreshold.medium.
+		</description>
+	</globalProperty>
+
+	<globalProperty>
+		<property>imaging.matchThreshold.highestMinimum</property>
+		<defaultValue>90</defaultValue>
+		<description>
+			Minimum score (0-100) the best candidate in a list must reach before it is
+			labelled "Highest". Below it, the best of a poor list keeps its plain color
+			from its score alone, so a weak match is never presented as a recommendation.
+			Independent of the 4 thresholds above: it may be above or below "veryHigh".
+			If missing, non-numeric or out of range, 90 is used.
 		</description>
 	</globalProperty>
 

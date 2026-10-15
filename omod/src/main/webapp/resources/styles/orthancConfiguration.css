@@ -24,7 +24,8 @@
     width: 30px;
 }
 
-.delete-img {
+.delete-img,
+.edit-img {
     width: 22px;
     margin-left: 12px;
 }

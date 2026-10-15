@@ -64,7 +64,44 @@ public interface DicomStudyService extends OpenmrsService {
 	
 	int uploadFile(OrthancConfiguration config, InputStream is) throws IOException;
 	
+	/**
+	 * Same as {@link #setPatient(DicomStudy, Patient, String)} with no override reason, so a
+	 * Medium/Low/Very Low match is rejected.
+	 */
 	void setPatient(DicomStudy study, Patient patient);
+	
+	/**
+	 * Links {@code study} to {@code patient}, or unlinks it when {@code patient} is null. This is
+	 * the only way the module changes a study's patient link, so every caller (pages, REST) is
+	 * subject to the same rules:
+	 * <ul>
+	 * <li>Linking with a match score in the Medium, Low or Very Low band requires a non-blank
+	 * {@code overrideReason}; without one, nothing is saved and
+	 * {@link OverrideReasonRequiredException} is thrown. The reason is written to the server log.</li>
+	 * <li>Moving a study from one patient to a different one is always logged, naming both
+	 * patients, whatever the match score.</li>
+	 * </ul>
+	 * 
+	 * @param study the study to link
+	 * @param patient the patient to link it to, or null to unlink it
+	 * @param overrideReason the clinician's typed justification; may be null when not required
+	 * @throws OverrideReasonRequiredException if a required reason is missing
+	 */
+	void setPatient(DicomStudy study, Patient patient, String overrideReason);
+	
+	/**
+	 * Computes a 0-100 match score expressing how likely it is that {@code study} belongs to
+	 * {@code patient}, combining a fuzzy name-similarity score with any available identity signals
+	 * (the DICOM PatientID and PatientBirthDate tags captured on the study, compared against the
+	 * patient's identifiers and birthdate). An exact PatientID match against one of the patient's
+	 * identifiers is treated as conclusive and always yields 100, regardless of the name score. See
+	 * {@link org.openmrs.module.imaging.api.match.MatchScoreCalculator} for the exact rules.
+	 * 
+	 * @param patient the candidate patient (may be null, in which case 0 is returned)
+	 * @param study the study being matched (may be null, in which case 0 is returned)
+	 * @return a 0-100 match score
+	 */
+	int computeMatchScore(Patient patient, DicomStudy study);
 	
 	void deleteStudy(DicomStudy dicomStudy) throws IOException;
 	

@@ -54,6 +54,9 @@ public class StudiesPageController {
 		    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA));
 		model.addAttribute("maxUploadImageDataSize", maxUploadImageDataSize);
 		model.addAttribute("ohifBaseUrl", imageProps.getOhifBaseUrl());
+		model.addAttribute("ohifAiBaseUrl", imageProps.getOhifAiBaseUrl());
+		model.addAttribute("privilegeUseOhifAi",
+		    Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_USE_OHIF_AI));
 			// medreport integration hook: the GSP renders a link to medreport's own reports
 			// page when that module is running. Nothing about reports is implemented here,
 			// and this module keeps no dependency on medreport.
@@ -63,9 +66,9 @@ public class StudiesPageController {
 	@ExceptionHandler(MaxUploadSizeExceededException.class)
 	public String handleMaxSizeException(MaxUploadSizeExceededException e, RedirectAttributes redirectAttributes,
 	        @RequestParam(value = "patientId") Patient patient) {
-		String status = "File size exceeds maximum upload limit. Please upload a smaller file.";
 		redirectAttributes.addAttribute("patientId", patient.getId());
-		redirectAttributes.addAttribute("message", status);
+		redirectAttributes.addAttribute("message", "imaging.studies.upload.maxSizeExceeded");
+		redirectAttributes.addAttribute("messageType", "error");
 		return "redirect:/imaging/studies.page";
 	}
 	
@@ -103,16 +106,23 @@ public class StudiesPageController {
 			}
 		}
 		String message;
+		String messageType;
 		if (numFiles == 0) {
-			message = "No files to upload";
+			message = "imaging.studies.upload.none";
+			messageType = "error";
 		} else if (numUploaded == numFiles) {
-			message = "All files uploaded";
+			message = "imaging.studies.upload.all";
+			messageType = "success";
 		} else {
-			message = "Some files could not be uploaded. " + numUploaded + " of " + numFiles + " files uploaded.";
+			message = "imaging.studies.upload.partial";
+			messageType = "error";
+			redirectAttributes.addAttribute("messageArg0", numUploaded);
+			redirectAttributes.addAttribute("messageArg1", numFiles);
 		}
 		
 		redirectAttributes.addAttribute("patientId", patient.getId());
 		redirectAttributes.addAttribute("message", message);
+		redirectAttributes.addAttribute("messageType", messageType);
 		return "redirect:/imaging/studies.page";
 	}
 	
@@ -128,6 +138,7 @@ public class StudiesPageController {
 	        @RequestParam(value = "orthancConfigurationId") int orthancConfigurationId,
 	        @RequestParam(value = "fetchOption") String fetchOption, @RequestParam(value = "patientId") Patient patient) {
 		String message;
+		String messageType;
 		try {
 			DicomStudyService dicomStudyService = Context.getService(DicomStudyService.class);
 			if (orthancConfigurationId == -1) {
@@ -146,14 +157,17 @@ public class StudiesPageController {
 					dicomStudyService.fetchNewChangedStudies(config);
 				}
 			}
-			message = "Studies successfully fetched";
+			message = "imaging.studies.fetch.success";
+			messageType = "success";
 		}
 		catch (IOException e) {
-			message = "Not all studies could be downloaded successfully. The server might be unavailable.";
+			message = "imaging.studies.fetch.error";
+			messageType = "error";
 		}
 		
 		redirectAttributes.addAttribute("patientId", patient.getId());
 		redirectAttributes.addAttribute("message", message);
+		redirectAttributes.addAttribute("messageType", messageType);
 		return "redirect:/imaging/syncStudies.page";
 	}
 	
@@ -168,6 +182,7 @@ public class StudiesPageController {
 	        @RequestParam(value = "patientId") Patient patient, @RequestParam(value = "deleteOption") String deleteOption) {
 		
 		String message;
+		String messageType;
 		boolean hasPrivilege = Context.getAuthenticatedUser().hasPrivilege(ImagingConstants.PRIVILEGE_MODIFY_IMAGE_DATA);
 		if (hasPrivilege) {
 			DicomStudyService dicomStudyService = Context.getService(DicomStudyService.class);
@@ -178,17 +193,22 @@ public class StudiesPageController {
 				} else {
 					dicomStudyService.deleteStudy(deleteStudy);
 				}
-				message = "Study successfully deleted";
+				message = "imaging.study.delete.success";
+				messageType = "success";
 			}
 			catch (IOException e) {
-				message = "Deletion of study failed. Reason: " + e.getMessage();
+				message = "imaging.study.delete.error";
+				messageType = "error";
+				redirectAttributes.addAttribute("messageArg0", e.getMessage() != null ? e.getMessage() : "");
 			}
 		} else {
-			message = "Permission denied (you don't have the necessary privileges)";
+			message = "imaging.study.delete.denied";
+			messageType = "error";
 		}
 		
 		redirectAttributes.addAttribute("patientId", patient.getId());
 		redirectAttributes.addAttribute("message", message);
+		redirectAttributes.addAttribute("messageType", messageType);
 		return "redirect:/imaging/studies.page";
 	}
 }
